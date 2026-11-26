@@ -19,6 +19,7 @@ interface AuthContextValue {
   session: Session | null;
   profile: Profile | null;
   loading: boolean;
+  profileLoading: boolean;
   setupStatus: SetupStatus;
   authError: string | null;
   signIn: (email: string, password: string) => Promise<void>;
@@ -40,6 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [profileLoading, setProfileLoading] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [setupStatus, setSetupStatus] = useState<SetupStatus>({
     configured: isSupabaseConfigured,
@@ -70,9 +72,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const client = supabase || (await ensureSupabaseClient());
     if (!activeSession || !client) {
       setProfile(null);
+      setProfileLoading(false);
       return;
     }
 
+    setProfileLoading(true);
     try {
       setAuthError(null);
       const data = await apiRequest<{ profile: Profile }>('/api/auth/ensure-profile', {
@@ -90,12 +94,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (directProfile) {
         setProfile(directProfile as Profile);
       } else {
-        const message =
-          directErr?.message ||
-          (err instanceof Error ? err.message : 'Gagal memuat profil pengguna.');
-        setAuthError(message);
-        setProfile(null);
+        const { data: rpcProfile, error: rpcErr } = await client.rpc('ensure_my_profile');
+        if (rpcProfile) {
+          setProfile(rpcProfile as Profile);
+        } else {
+          const message =
+            rpcErr?.message ||
+            directErr?.message ||
+            (err instanceof Error ? err.message : 'Gagal memuat profil pengguna.');
+          setAuthError(message);
+          setProfile(null);
+        }
       }
+    } finally {
+      setProfileLoading(false);
     }
   }, []);
 
@@ -266,6 +278,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         session,
         profile,
         loading,
+        profileLoading,
         setupStatus,
         authError,
         signIn,

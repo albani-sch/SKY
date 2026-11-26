@@ -15,12 +15,21 @@ import { UserManagementPage } from './pages/app/UserManagementPage';
 import { UserRole } from './types/database';
 
 function ProtectedApp({ children }: { children: React.ReactNode }) {
-  const { user, profile, loading, setupStatus, authError, signOut } = useAuth();
+  const {
+    user,
+    profile,
+    loading,
+    profileLoading,
+    setupStatus,
+    authError,
+    signOut,
+    refreshProfile,
+  } = useAuth();
 
-  if (loading) {
+  if (loading || (user && profileLoading && !profile)) {
     return (
       <div className="min-h-screen bg-neutral-50 flex items-center justify-center p-6">
-        <div className="text-sm font-medium text-neutral-600">Memuat sesi aplikasi...</div>
+        <div className="text-sm font-medium text-neutral-600">Memuat sesi &amp; profil aplikasi...</div>
       </div>
     );
   }
@@ -50,16 +59,25 @@ function ProtectedApp({ children }: { children: React.ReactNode }) {
               </h2>
               <p className="text-sm text-neutral-600">
                 {authError ||
-                  'Pastikan skema SQL di supabase/schema.sql sudah dijalankan pada proyek Supabase Anda.'}
+                  'Pastikan skema SQL terbaru di supabase/schema.sql sudah dijalankan pada proyek Supabase Anda.'}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => signOut()}
-              className="px-4 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
-            >
-              Keluar &amp; Coba Lagi
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => refreshProfile()}
+                className="px-4 py-2 text-xs font-semibold text-neutral-700 border border-neutral-200 hover:bg-neutral-50 rounded-lg cursor-pointer whitespace-nowrap"
+              >
+                Muat Ulang Profil
+              </button>
+              <button
+                type="button"
+                onClick={() => signOut()}
+                className="px-4 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg cursor-pointer whitespace-nowrap"
+              >
+                Keluar &amp; Coba Lagi
+              </button>
+            </div>
           </div>
           <SupabaseSetupNotice />
         </div>

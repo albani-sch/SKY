@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { SupabaseSetupNotice } from '../components/SupabaseSetupNotice';
 
 export function LoginPage() {
-  const { user, loading, setupStatus, signIn, signUpFirstAdmin } = useAuth();
+  const { user, profile, loading, profileLoading, setupStatus, signIn, signUpFirstAdmin } = useAuth();
   const navigate = useNavigate();
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -19,10 +19,10 @@ export function LoginPage() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!loading && user) {
+    if (!loading && !profileLoading && user && profile) {
       navigate('/app/dashboard', { replace: true });
     }
-  }, [loading, user, navigate]);
+  }, [loading, profileLoading, user, profile, navigate]);
 
   useEffect(() => {
     if (setupStatus.userCount === 0) {

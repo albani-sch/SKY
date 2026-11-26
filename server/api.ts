@@ -298,19 +298,27 @@ export function createApiApp() {
         res.status(401).json({ error: 'Token tidak valid.' });
         return;
       }
-      const { data: existingProfile, error: profErr } = await anonClient
+      const { data: existingProfile } = await anonClient
         .from('profiles')
         .select('*')
         .eq('id', userData.user.id)
-        .single();
-      if (profErr || !existingProfile) {
-        res.status(404).json({
-          error:
-            'Profil belum tersedia dan SUPABASE_SERVICE_ROLE_KEY belum disetel. Pastikan SQL trigger di supabase/schema.sql sudah dijalankan.',
-        });
+        .maybeSingle();
+
+      if (existingProfile) {
+        res.json({ profile: existingProfile });
         return;
       }
-      res.json({ profile: existingProfile });
+
+      const { data: rpcProfile, error: rpcErr } = await anonClient.rpc('ensure_my_profile');
+      if (!rpcErr && rpcProfile) {
+        res.json({ profile: rpcProfile });
+        return;
+      }
+
+      res.status(404).json({
+        error:
+          'Profil belum tersedia dan SUPABASE_SERVICE_ROLE_KEY belum disetel. Pastikan SQL schema terbaru di supabase/schema.sql sudah dijalankan.',
+      });
       return;
     }
 

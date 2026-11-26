@@ -248,10 +248,95 @@ create policy "Admin can manage profiles"
 
 -- Policies: jurusan & classes
 drop policy if exists "Authenticated can read jurusan" on public.jurusan;
-create policy "Authenticated can read jurusan"
+drop policy if exists "Public can read jurusan" on public.jurusan;
+create policy "Public can read jurusan"
   on public.jurusan for select
-  to authenticated
+  to anon, authenticated
   using (true);
+
+-- RPC aman untuk memastikan profil user saat ini ada (dan user pertama menjadi admin)
+create or replace function public.ensure_my_profile()
+returns public.profiles
+language plpgsql
+security definer set search_path = public, auth
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_user auth.users%rowtype;
+  v_profile public.profiles%rowtype;
+  v_count integer;
+  v_earliest_id uuid;
+  v_role text;
+  v_name text;
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select * into v_profile from public.profiles where id = v_uid;
+  if found then
+    return v_profile;
+  end if;
+
+  select * into v_user from auth.users where id = v_uid;
+  if not found then
+    raise exception 'Auth user not found';
+  end if;
+
+  select count(*) into v_count from public.profiles;
+  select id into v_earliest_id from auth.users order by created_at asc limit 1;
+
+  if v_count = 0 or v_earliest_id = v_uid then
+    v_role := 'admin';
+  else
+    v_role := coalesce(v_user.raw_user_meta_data->>'role', 'tenaga_kependidikan');
+    if v_role not in ('admin', 'guru', 'tenaga_kependidikan') then
+      v_role := 'tenaga_kependidikan';
+    end if;
+  end if;
+
+  v_name := coalesce(
+    nullif(trim(v_user.raw_user_meta_data->>'full_name'), ''),
+    split_part(v_user.email, '@', 1)
+  );
+
+  insert into public.profiles (id, email, full_name, nip, role)
+  values (
+    v_user.id,
+    v_user.email,
+    v_name,
+    nullif(trim(v_user.raw_user_meta_data->>'nip'), ''),
+    v_role
+  )
+  on conflict (id) do update
+    set email = excluded.email,
+        updated_at = now()
+  returning * into v_profile;
+
+  return v_profile;
+end;
+$$;
+
+grant execute on function public.ensure_my_profile() to authenticated;
+
+-- Backfill otomatis untuk akun auth.users yang sudah dibuat sebelum schema.sql dijalankan
+insert into public.profiles (id, email, full_name, nip, role)
+select
+  u.id,
+  u.email,
+  coalesce(nullif(trim(u.raw_user_meta_data->>'full_name'), ''), split_part(u.email, '@', 1)),
+  nullif(trim(u.raw_user_meta_data->>'nip'), ''),
+  case
+    when row_number() over (order by u.created_at asc) = 1
+      and not exists (select 1 from public.profiles where role = 'admin')
+    then 'admin'
+    when (u.raw_user_meta_data->>'role') in ('admin', 'guru', 'tenaga_kependidikan')
+    then (u.raw_user_meta_data->>'role')
+    else 'tenaga_kependidikan'
+  end
+from auth.users u
+where not exists (select 1 from public.profiles p where p.id = u.id)
+on conflict (id) do nothing;
 
 drop policy if exists "Authenticated can read classes" on public.classes;
 create policy "Authenticated can read classes"
