@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Check, CheckCircle2, Copy, Database, ExternalLink, RefreshCw, XCircle } from 'lucide-react';
-import { apiRequest } from '../lib/supabase';
+import { apiRequest, ensureSupabaseClient } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
+import bundledSchemaSql from '../../supabase/schema.sql?raw';
 
 interface TableStatus {
   name: string;
@@ -54,8 +56,9 @@ const RELATION_MAP = [
 ];
 
 export function SupabaseSetupNotice() {
-  const [sqlText, setSqlText] = useState<string>('');
-  const [loadingSql, setLoadingSql] = useState(false);
+  const { refreshSetupStatus } = useAuth();
+  const [sqlText] = useState<string>(bundledSchemaSql);
+  const [loadingSql] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showSql, setShowSql] = useState(false);
   const [dbStatus, setDbStatus] = useState<DbStatusResponse | null>(null);
@@ -64,10 +67,40 @@ export function SupabaseSetupNotice() {
   const checkDbStatus = async () => {
     setCheckingDb(true);
     try {
-      const data = await apiRequest<DbStatusResponse>('/api/db/status');
+      const [data] = await Promise.all([
+        apiRequest<DbStatusResponse>('/api/db/status'),
+        refreshSetupStatus(),
+      ]);
       setDbStatus(data);
     } catch {
-      setDbStatus(null);
+      const client = await ensureSupabaseClient();
+      if (client) {
+        const tableNames = [
+          'profiles',
+          'jurusan',
+          'classes',
+          'students',
+          'employee_attendance',
+          'student_attendance',
+        ] as const;
+        const results = await Promise.all(
+          tableNames.map(async (name) => {
+            const { count, error } = await client
+              .from(name)
+              .select('*', { count: 'exact', head: true });
+            return error
+              ? { name, exists: false, count: null }
+              : { name, exists: true, count: count ?? 0 };
+          })
+        );
+        setDbStatus({
+          configured: true,
+          connected: results.some((r) => r.exists),
+          tables: results,
+        });
+      } else {
+        setDbStatus(null);
+      }
     } finally {
       setCheckingDb(false);
     }
@@ -77,36 +110,12 @@ export function SupabaseSetupNotice() {
     checkDbStatus();
   }, []);
 
-  const handleLoadSchema = async () => {
-    if (sqlText) {
-      setShowSql((prev) => !prev);
-      return;
-    }
-    setLoadingSql(true);
-    try {
-      const data = await apiRequest<{ sql: string }>('/api/schema');
-      setSqlText(data.sql);
-      setShowSql(true);
-    } catch {
-      setSqlText('-- Buka file /supabase/schema.sql di repositori proyek.');
-      setShowSql(true);
-    } finally {
-      setLoadingSql(false);
-    }
+  const handleLoadSchema = () => {
+    setShowSql((prev) => !prev);
   };
 
   const handleCopy = async () => {
-    let text = sqlText;
-    if (!text) {
-      try {
-        const data = await apiRequest<{ sql: string }>('/api/schema');
-        text = data.sql;
-        setSqlText(data.sql);
-      } catch {
-        return;
-      }
-    }
-    await navigator.clipboard.writeText(text);
+    await navigator.clipboard.writeText(sqlText);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -146,9 +155,15 @@ export function SupabaseSetupNotice() {
       </div>
 
       {/* Environment Variable Requirements */}
-      <div className="border-t border-neutral-200 pt-5 space-y-2">
+      <div className="border-t border-neutral-200 pt-5 space-y-2.5">
         <p className="text-xs font-semibold text-neutral-900">
-          01. Konfigurasi Variabel Lingkungan (Secrets / .env)
+          01. Konfigurasi Variabel Lingkungan (Vercel Environment Variables / Secrets AI Studio)
+        </p>
+        <p className="text-xs text-neutral-600 leading-relaxed">
+          Jika di-deploy di <strong>Vercel</strong>, buka{' '}
+          <strong>Project Settings → Environment Variables</strong> lalu tambahkan ketiga variabel
+          dari <strong>Supabase Project Settings → API</strong> di bawah ini dan lakukan{' '}
+          <strong>Redeploy</strong> (agar variabel terpasang di build &amp; Serverless Function):
         </p>
         <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4 font-mono text-xs text-neutral-800 space-y-1.5 overflow-x-auto">
           <div>VITE_SUPABASE_URL=&quot;https://project-ref.supabase.co&quot;</div>

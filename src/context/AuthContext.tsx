@@ -1,6 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { Session, User } from '@supabase/supabase-js';
-import { apiRequest, isSupabaseConfigured, supabase } from '../lib/supabase';
+import {
+  apiRequest,
+  ensureSupabaseClient,
+  isSupabaseConfigured,
+  supabase,
+} from '../lib/supabase';
 import { Profile } from '../types/database';
 
 interface SetupStatus {
@@ -17,7 +22,12 @@ interface AuthContextValue {
   setupStatus: SetupStatus;
   authError: string | null;
   signIn: (email: string, password: string) => Promise<void>;
-  signUpFirstAdmin: (email: string, password: string, fullName: string, nip?: string) => Promise<{ needsEmailConfirm: boolean }>;
+  signUpFirstAdmin: (
+    email: string,
+    password: string,
+    fullName: string,
+    nip?: string
+  ) => Promise<{ needsEmailConfirm: boolean }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   refreshSetupStatus: () => Promise<void>;
@@ -38,20 +48,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
 
   const refreshSetupStatus = useCallback(async () => {
+    const client = await ensureSupabaseClient();
+    const clientReady = Boolean(client);
+
     try {
       const status = await apiRequest<SetupStatus>('/api/auth/setup-status');
       setSetupStatus({
-        configured: isSupabaseConfigured && status.configured,
-        hasServiceRole: status.hasServiceRole,
-        userCount: status.userCount,
+        configured: clientReady || Boolean(status.configured),
+        hasServiceRole: Boolean(status.hasServiceRole),
+        userCount: typeof status.userCount === 'number' ? status.userCount : null,
       });
     } catch {
-      setSetupStatus((prev) => ({ ...prev, configured: isSupabaseConfigured }));
+      setSetupStatus((prev) => ({
+        ...prev,
+        configured: clientReady || isSupabaseConfigured,
+      }));
     }
   }, []);
 
   const ensureAndLoadProfile = useCallback(async (activeSession: Session | null) => {
-    if (!activeSession || !supabase) {
+    const client = supabase || (await ensureSupabaseClient());
+    if (!activeSession || !client) {
       setProfile(null);
       return;
     }
@@ -64,8 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       setProfile(data.profile);
     } catch (err) {
-      // Fallback: try reading directly from profiles table via RLS
-      const { data: directProfile, error: directErr } = await supabase
+      const { data: directProfile, error: directErr } = await client
         .from('profiles')
         .select('*')
         .eq('id', activeSession.user.id)
@@ -85,11 +101,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
+    let unsubscribe: (() => void) | null = null;
 
     async function init() {
+      const client = await ensureSupabaseClient();
       await refreshSetupStatus();
 
-      if (!supabase) {
+      if (!client) {
         if (mounted) {
           setLoading(false);
         }
@@ -98,7 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const {
         data: { session: initialSession },
-      } = await supabase.auth.getSession();
+      } = await client.auth.getSession();
 
       if (!mounted) return;
       setSession(initialSession);
@@ -108,6 +126,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await ensureAndLoadProfile(initialSession);
       }
 
+      const {
+        data: { subscription },
+      } = client.auth.onAuthStateChange((_event, nextSession) => {
+        setSession(nextSession);
+        setUser(nextSession?.user ?? null);
+        if (nextSession) {
+          ensureAndLoadProfile(nextSession);
+        } else {
+          setProfile(null);
+        }
+      });
+
+      unsubscribe = () => subscription.unsubscribe();
+
       if (mounted) {
         setLoading(false);
       }
@@ -115,32 +147,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     init();
 
-    if (!supabase) return;
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      setUser(nextSession?.user ?? null);
-      if (nextSession) {
-        ensureAndLoadProfile(nextSession);
-      } else {
-        setProfile(null);
-      }
-    });
-
     return () => {
       mounted = false;
-      subscription.unsubscribe();
+      if (unsubscribe) unsubscribe();
     };
   }, [ensureAndLoadProfile, refreshSetupStatus]);
 
   const signIn = async (email: string, password: string) => {
-    if (!supabase) {
+    const client = supabase || (await ensureSupabaseClient());
+    if (!client) {
       throw new Error('Supabase belum dikonfigurasi.');
     }
     setAuthError(null);
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await client.auth.signInWithPassword({
       email: email.trim(),
       password,
     });
@@ -158,11 +177,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     fullName: string,
     nip?: string
   ) => {
-    if (!supabase) {
+    const client = supabase || (await ensureSupabaseClient());
+    if (!client) {
       throw new Error('Supabase belum dikonfigurasi.');
     }
     setAuthError(null);
-    const { data, error } = await supabase.auth.signUp({
+    const { data, error } = await client.auth.signUp({
       email: email.trim(),
       password,
       options: {
@@ -185,8 +205,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
-    if (supabase) {
-      await supabase.auth.signOut();
+    const client = supabase || (await ensureSupabaseClient());
+    if (client) {
+      await client.auth.signOut();
     }
     setSession(null);
     setUser(null);
