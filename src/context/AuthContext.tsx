@@ -182,6 +182,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Supabase belum dikonfigurasi.');
     }
     setAuthError(null);
+
+    try {
+      const res = await fetch('/api/auth/register-first-admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.trim(),
+          password,
+          full_name: fullName.trim(),
+          nip: nip?.trim() || null,
+        }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const body = await res.json();
+        if (res.ok) {
+          const { data: loginData, error: loginErr } = await client.auth.signInWithPassword({
+            email: email.trim(),
+            password,
+          });
+          if (loginErr) throw new Error(loginErr.message);
+          if (loginData.session) {
+            await ensureAndLoadProfile(loginData.session);
+          }
+          await refreshSetupStatus();
+          return { needsEmailConfirm: false };
+        }
+        if (res.status !== 503) {
+          throw new Error(body?.error || 'Gagal mendaftarkan akun pertama.');
+        }
+      }
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        !err.message.includes('Failed to fetch') &&
+        !err.message.includes('503')
+      ) {
+        throw err;
+      }
+    }
+
     const { data, error } = await client.auth.signUp({
       email: email.trim(),
       password,

@@ -58,7 +58,23 @@ export function LoginPage() {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Autentikasi gagal.');
+      const raw = err instanceof Error ? err.message : 'Autentikasi gagal.';
+      const lower = raw.toLowerCase();
+      if (lower.includes('invalid login credentials')) {
+        setError(
+          'Email atau kata sandi salah, atau akun belum terdaftar. Jika belum punya akun, daftar terlebih dahulu di tab "Daftar Akun Pertama" atau buat user melalui Supabase Authentication.'
+        );
+      } else if (lower.includes('email not confirmed')) {
+        setError(
+          'Email belum dikonfirmasi di Supabase Authentication. Buka link konfirmasi pada inbox email Anda atau konfirmasi user secara manual di Supabase Dashboard → Authentication → Users.'
+        );
+      } else if (lower.includes('user already registered')) {
+        setError(
+          'Email tersebut sudah terdaftar di Supabase Authentication. Silakan masuk melalui tab "Masuk (Login)".'
+        );
+      } else {
+        setError(raw);
+      }
     } finally {
       setSubmitting(false);
     }

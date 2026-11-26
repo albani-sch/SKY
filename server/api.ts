@@ -210,6 +210,75 @@ export function createApiApp() {
     }
   });
 
+  app.post('/api/auth/register-first-admin', async (req: Request, res: Response) => {
+    const adminClient = getAdminClient();
+    if (!adminClient) {
+      res.status(503).json({
+        error: 'SUPABASE_SERVICE_ROLE_KEY belum dikonfigurasi di server.',
+      });
+      return;
+    }
+
+    const { email, password, full_name, nip } = req.body || {};
+    if (!email || !password || !full_name) {
+      res.status(400).json({ error: 'Nama lengkap, email, dan kata sandi wajib diisi.' });
+      return;
+    }
+    if (String(password).length < 6) {
+      res.status(400).json({ error: 'Kata sandi minimal 6 karakter.' });
+      return;
+    }
+
+    const { data: listData, error: listErr } = await adminClient.auth.admin.listUsers({
+      page: 1,
+      perPage: 1,
+    });
+
+    if (listErr) {
+      res.status(500).json({ error: listErr.message });
+      return;
+    }
+
+    if ((listData?.users?.length ?? 0) > 0) {
+      res.status(403).json({
+        error:
+          'Akun Administrator pertama sudah terdaftar. Silakan masuk melalui tab Login atau hubungi Admin.',
+      });
+      return;
+    }
+
+    const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
+      email: String(email).trim(),
+      password: String(password),
+      email_confirm: true,
+      user_metadata: {
+        full_name: String(full_name).trim(),
+        nip: nip ? String(nip).trim() : null,
+        role: 'admin',
+      },
+    });
+
+    if (createErr || !created.user) {
+      res.status(400).json({ error: createErr?.message || 'Gagal membuat akun admin.' });
+      return;
+    }
+
+    const { error: profErr } = await adminClient.from('profiles').upsert({
+      id: created.user.id,
+      email: created.user.email || String(email).trim(),
+      full_name: String(full_name).trim(),
+      nip: nip ? String(nip).trim() : null,
+      role: 'admin',
+    });
+
+    if (profErr) {
+      res.status(500).json({ error: profErr.message });
+      return;
+    }
+
+    res.status(201).json({ ok: true });
+  });
+
   app.post('/api/auth/ensure-profile', async (req: Request, res: Response) => {
     const token = extractBearerToken(req);
     if (!token) {
